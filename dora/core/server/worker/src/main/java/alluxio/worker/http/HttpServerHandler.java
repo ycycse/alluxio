@@ -250,12 +250,13 @@ public class HttpServerHandler extends SimpleChannelInboundHandler<HttpObject> {
     String ufsPath = "s3://ycy-alluxio-test/underFs/blocks_files/file_7.243897438049316MB.txt";
     AlluxioURI uri = new AlluxioURI(ufsPath);
     ReadTargetBuffer buffer;
+    int readLength;
     try {
       PositionReader positionReader = mFileSystem.openPositionRead(uri);
       byte[] bytes = new byte[(int) length];
       buffer = new ByteArrayTargetBuffer(bytes, 0);
-      int res = positionReader.readInternal(offset, buffer, (int) length);
-      if(res == -1) {
+      readLength = positionReader.readInternal(offset, buffer, (int) length);
+      if(readLength == -1) {
         throw new PageNotFoundException("page not found: fileId " + fileId + ", pageIndex " + pageIndex);
       }
     }catch (FileDoesNotExistException | IOException e){
@@ -267,7 +268,7 @@ public class HttpServerHandler extends SimpleChannelInboundHandler<HttpObject> {
     HttpResponse response = new DefaultHttpResponse(httpRequest.protocolVersion(), OK);
     response.headers()
             .set(CONTENT_TYPE, TEXT_PLAIN)
-            .setInt(CONTENT_LENGTH, (int) length);
+            .setInt(CONTENT_LENGTH, readLength);
     HttpResponseContext httpResponseContext = new HttpResponseContext(response, null);
     httpResponseContext.setBuffer(nettyBuffer);
     return httpResponseContext;
