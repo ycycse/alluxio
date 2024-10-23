@@ -11,6 +11,7 @@
 
 package alluxio.worker.http;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.FileRegion;
 import io.netty.handler.codec.http.HttpResponse;
 
@@ -22,6 +23,8 @@ public class HttpResponseContext {
   private final HttpResponse mHttpResponse;
 
   private final FileRegion mFileRegion;
+
+  private ByteBuf mBuffer;
 
   /**
    * Http response context for wrapping useful information.
@@ -47,5 +50,16 @@ public class HttpResponseContext {
    */
   public FileRegion getFileRegion() {
     return mFileRegion;
+  }
+
+  public void setBuffer(ByteBuf mBuffer) {
+    this.mBuffer = mBuffer;
+  }
+
+  public ByteBuf getBuffer() {
+    if(mBuffer == null) {
+      throw new UnsupportedOperationException("Buffer is not set");
+    }
+    return mBuffer;
   }
 }

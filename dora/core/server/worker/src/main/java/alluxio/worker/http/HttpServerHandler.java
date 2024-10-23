@@ -14,22 +14,24 @@ package alluxio.worker.http;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONNECTION;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_LENGTH;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
-import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_JSON;
-import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
-import static io.netty.handler.codec.http.HttpHeaderValues.KEEP_ALIVE;
-import static io.netty.handler.codec.http.HttpHeaderValues.TEXT_PLAIN;
+import static io.netty.handler.codec.http.HttpHeaderValues.*;
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
 
 import alluxio.AlluxioURI;
+import alluxio.PositionReader;
 import alluxio.client.file.FileSystem;
 import alluxio.client.file.FileSystemContext;
 import alluxio.client.file.URIStatus;
 import alluxio.conf.Configuration;
 import alluxio.exception.AlluxioException;
+import alluxio.exception.FileDoesNotExistException;
 import alluxio.exception.PageNotFoundException;
+import alluxio.file.ByteArrayTargetBuffer;
+import alluxio.file.ReadTargetBuffer;
 import alluxio.grpc.ListStatusPOptions;
 import alluxio.metrics.MetricKey;
 import alluxio.metrics.MetricsSystem;
+import alluxio.network.protocol.databuffer.DataFileChannel;
 import alluxio.util.FileSystemOptionsUtils;
 import alluxio.worker.http.vo.WritePageResponseVO;
 
@@ -37,11 +39,7 @@ import com.google.gson.Gson;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.FileRegion;
-import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.*;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.DefaultHttpResponse;
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -54,7 +52,12 @@ import io.netty.handler.codec.http.LastHttpContent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -116,7 +119,7 @@ public class HttpServerHandler extends SimpleChannelInboundHandler<HttpObject> {
         channelFuture = ctx.write(response);
       } else {
         ctx.write(response);
-        ctx.write(responseContext.getFileRegion());
+        ctx.write(responseContext.getBuffer());
         channelFuture = ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
       }
 
@@ -242,13 +245,31 @@ public class HttpServerHandler extends SimpleChannelInboundHandler<HttpObject> {
       }
     }
     MetricsSystem.meter(MetricKey.WORKER_HTTP_BYTES_REQUESTED.getName()).mark(length);
-    fileRegion = mPagedService.getPageFileRegion(fileId, pageIndex, offset, length);
+
+    // todo: We should get ufsPath from pageId, ufsPath should be pageId in Alluxio EE
+    String ufsPath = "s3://ycy-alluxio-test/underFs/blocks_files/file_7.243897438049316MB.txt";
+    AlluxioURI uri = new AlluxioURI(ufsPath);
+    ReadTargetBuffer buffer;
+    try {
+      PositionReader positionReader = mFileSystem.openPositionRead(uri);
+      byte[] bytes = new byte[(int) length];
+      buffer = new ByteArrayTargetBuffer(bytes, 0);
+      int res = positionReader.readInternal(offset, buffer, (int) length);
+      if(res == -1) {
+        throw new PageNotFoundException("page not found: fileId " + fileId + ", pageIndex " + pageIndex);
+      }
+    }catch (FileDoesNotExistException | IOException e){
+      throw new PageNotFoundException(e.toString());
+    }
+
+    ByteBuf nettyBuffer = Unpooled.wrappedBuffer(buffer.byteBuffer());
     MetricsSystem.meter(MetricKey.WORKER_HTTP_BYTES_READ_CACHE.getName()).mark(length);
     HttpResponse response = new DefaultHttpResponse(httpRequest.protocolVersion(), OK);
-    HttpResponseContext httpResponseContext = new HttpResponseContext(response, fileRegion);
     response.headers()
-        .set(CONTENT_TYPE, TEXT_PLAIN)
-        .setInt(CONTENT_LENGTH, (int) fileRegion.count());
+            .set(CONTENT_TYPE, TEXT_PLAIN)
+            .setInt(CONTENT_LENGTH, (int) length);
+    HttpResponseContext httpResponseContext = new HttpResponseContext(response, null);
+    httpResponseContext.setBuffer(nettyBuffer);
     return httpResponseContext;
   }
 
